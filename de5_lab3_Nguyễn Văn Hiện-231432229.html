@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fall Detection - Lab 3 Đề 5 (FreeRTOS)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  body{font-family:Arial,sans-serif;background:#f3f5f9;margin:0;padding:16px;color:#222}
+  h1{text-align:center;font-size:22px}
+  .row{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-bottom:12px}
+  .card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 4px #0002;min-width:200px;text-align:center}
+  .card b{display:block;font-size:32px;margin-top:6px}
+  .chart{flex:1 1 420px;max-width:560px}
+  button{padding:10px 18px;border:0;border-radius:8px;font-size:15px;cursor:pointer;background:#2d6cdf;color:#fff}
+  button.on{background:#2e9e4f} button.reset{background:#777}
+  .NORMAL{color:#2e9e4f}.CHECKING{color:#e69500}
+  .FALL{color:#d11;animation:b .5s infinite}@keyframes b{50%{opacity:.2}}
+  .clock{font-weight:bold;font-size:18px}
+  #stale{color:#d11;font-weight:bold}
+  table.log{width:100%;border-collapse:collapse;font-size:14px}
+  table.log th,table.log td{padding:6px 8px;border-bottom:1px solid #e3e6ee;text-align:left}
+  table.log th{background:#f3f5f9;position:sticky;top:0}
+  tr.ev-FALL td{background:#fde8e8;color:#b00;font-weight:bold}
+  tr.ev-CHECKING td{background:#fff4de}
+</style>
+</head>
+<body>
+<h1>Giám sát và cảnh báo té ngã (ESP32 + MPU6050)</h1>
+<p id="conn" style="text-align:center">Đang kết nối broker...</p>
+<p style="text-align:center">🕒 <span class="clock">--:--:--</span> &nbsp;|&nbsp; Cập nhật lần cuối: <span class="last-update">--</span> <span id="stale"></span></p>
+
+<div class="row">
+  <div class="card">Gia tốc tổng<b><span class="val-accel">--</span> g</b></div>
+  <div class="card">Góc nghiêng<b><span class="val-tilt">--</span> °</b></div>
+  <div class="card">Trạng thái<b class="val-status">--</b></div>
+</div>
+
+<div class="row">
+  <div class="card chart"><canvas id="cAccel"></canvas></div>
+  <div class="card chart"><canvas id="cTilt"></canvas></div>
+</div>
+
+<div class="row">
+  <div class="card" style="flex:1 1 600px;max-width:1140px;text-align:left">
+    <div style="font-size:16px;font-weight:bold;margin-bottom:8px">Nhật ký sự kiện theo thời gian</div>
+    <div style="max-height:220px;overflow:auto">
+      <table class="log" id="log">
+        <thead><tr><th>Thời gian</th><th>Sự kiện</th><th>Gia tốc (g)</th><th>Góc nghiêng (°)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <button id="btnLed">LED: OFF</button>
+  <button id="btnBuz">LOA: OFF</button>
+  <button id="btnReset" class="reset">Reset cảnh báo</button>
+</div>
+
+<script>
+const BASE = "nguyenvanhien_231432229/lab3/";               // phải trùng với code ESP32
+const client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
+let ledOn = false, buzOn = false;
+let curAccel = null, curTilt = null, lastStatus = null, lastMsg = 0;
+
+const hhmmss = () => new Date().toLocaleTimeString("vi-VN", { hour12: false });
+setInterval(() => {
+  setText("clock", new Date().toLocaleString("vi-VN", { hour12: false }));
+  const lost = lastMsg && (Date.now() - lastMsg > 5000);   // quá 5 giây không có dữ liệu
+  document.getElementById("stale").textContent = lost ? "⚠ Mất dữ liệu từ thiết bị" : "";
+}, 1000);
+
+function addLog(text, cls) {
+  const tb = document.querySelector("#log tbody");
+  const tr = document.createElement("tr");
+  tr.className = cls ? "ev-" + cls : "";
+  [hhmmss(), text, curAccel ?? "--", curTilt ?? "--"].forEach(v => {
+    const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+  });
+  tb.insertBefore(tr, tb.firstChild);                      // sự kiện mới nằm trên cùng
+  while (tb.rows.length > 50) tb.deleteRow(-1);            // giữ tối đa 50 dòng
+}
+
+function makeChart(id, label, color) {
+  return new Chart(document.getElementById(id), {
+    type: "line",
+    data: { labels: [], datasets: [{ label, data: [], borderColor: color, tension: .3, pointRadius: 0 }] },
+    options: { animation: false, scales: { x: { ticks: { maxTicksLimit: 6, maxRotation: 0 } } } }
+  });
+}
+const cAccel = makeChart("cAccel", "Gia tốc tổng (g)", "#2d6cdf");
+const cTilt  = makeChart("cTilt", "Góc nghiêng (độ)", "#e67300");
+
+function push(chart, v) {
+  chart.data.labels.push(new Date().toLocaleTimeString());
+  chart.data.datasets[0].data.push(v);
+  if (chart.data.labels.length > 60) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
+  chart.update();
+}
+function setText(cls, txt) { document.querySelectorAll("." + cls).forEach(e => e.textContent = txt); }
+
+client.on("connect", () => {
+  document.getElementById("conn").textContent = "Đã kết nối HiveMQ ✔";
+  ["accel", "tilt", "status", "led/state", "buzzer/state"].forEach(t => client.subscribe(BASE + t));
+});
+client.on("error", e => document.getElementById("conn").textContent = "Lỗi MQTT: " + e.message);
+
+client.on("message", (topic, payload) => {
+  const v = payload.toString(), t = topic.replace(BASE, "");
+  lastMsg = Date.now();
+  setText("last-update", hhmmss());
+  if (t === "accel")  { curAccel = v; setText("val-accel", v); push(cAccel, parseFloat(v)); }
+  if (t === "tilt")   { curTilt = v; setText("val-tilt", v);  push(cTilt, parseFloat(v)); }
+  if (t === "status") {
+    document.querySelectorAll(".val-status").forEach(e => { e.textContent = v; e.className = "val-status " + v; });
+    if (v !== lastStatus) {
+      addLog(lastStatus === null ? "Bắt đầu giám sát: " + v : "Trạng thái: " + lastStatus + " → " + v, v);
+      lastStatus = v;
+    }
+  }
+  if (t === "led/state")    { if (ledOn !== (v === "ON")) addLog("LED " + (v === "ON" ? "BẬT" : "TẮT")); ledOn = v === "ON"; refreshBtn("btnLed", "LED", ledOn); }
+  if (t === "buzzer/state") { if (buzOn !== (v === "ON")) addLog("Còi " + (v === "ON" ? "BẬT" : "TẮT")); buzOn = v === "ON"; refreshBtn("btnBuz", "LOA", buzOn); }
+});
+
+function refreshBtn(id, name, on) {
+  const b = document.getElementById(id);
+  b.textContent = name + ": " + (on ? "ON" : "OFF");
+  b.classList.toggle("on", on);
+}
+document.getElementById("btnLed").onclick   = () => client.publish(BASE + "led/cmd", ledOn ? "OFF" : "ON");
+document.getElementById("btnBuz").onclick   = () => client.publish(BASE + "buzzer/cmd", buzOn ? "OFF" : "ON");
+document.getElementById("btnReset").onclick = () => client.publish(BASE + "reset", "1");
+</script>
+</body>
+</html>
