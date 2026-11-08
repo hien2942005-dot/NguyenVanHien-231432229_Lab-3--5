@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "author": "Nguyen Van Hien - 231432229",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": -4.76, "attrs": {} },
+    {
+      "type": "wokwi-mpu6050",
+      "id": "imu",
+      "top": 2.98,
+      "left": 137.32,
+      "rotate": 270,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 44.4,
+      "left": -140.2,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 109.85,
+      "left": -107,
+      "rotate": 180,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": 177.9,
+      "left": -117.9,
+      "rotate": 270,
+      "attrs": { "volume": "0.1" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "imu:VCC", "esp:3V3", "red", [ "v-20", "h-200" ] ],
+    [ "imu:GND", "esp:GND.2", "black", [ "v0", "h0" ] ],
+    [ "esp:26", "r1:1", "orange", [ "h0" ] ],
+    [ "r1:2", "led1:A", "orange", [ "h0" ] ],
+    [ "led1:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "esp:27", "bz1:2", "blue", [ "h0" ] ],
+    [ "esp:21", "imu:SDA", "green", [ "h19.2", "v-48" ] ],
+    [ "esp:22", "imu:SCL", "green", [ "h9.6", "v-28.8" ] ],
+    [ "bz1:1", "esp:GND.1", "green", [ "h19.2", "v-76.8" ] ]
+  ],
+  "dependencies": {}
+}
